@@ -1,0 +1,52 @@
+[
+ {
+  "id": 774,
+  "title": "[0.1.22] Handoff cannot bound or approve the delegated target run: build_delegate_tool calls target.run(message) with no timeout or approval_callback",
+  "body": "**Environment**\n- Found on openminion 0.1.21 (PyPI), Python 3.12, Windows 11; still present on 0.1.22 and current `dev` (`e0aa4b8d`).\n- Provider-independent: this is in the SDK handoff tool, before any provider call.\n\n**Steps to reproduce**\n\n```python\nfrom openminion import Agent, Handoff, tool\n\n\n@tool(dangerous=True, min_scope=\"WRITE_SAFE\")\ndef publish(text: str) -> str:\n    return f\"published: {text}\"\n\n\npublisher = Agent(name=\"publisher\", instructions=\"Publish the given text.\", tools=[publish])\ncoordinator = Agent(\n    instructions=\"Hand publishing to the publisher.\",\n    handoffs=[Handoff(t"
+ },
+ {
+  "id": 773,
+  "title": "[0.1.22] TurnResponse.telemetry reports 0 tokens when usage_*_tokens metadata keys are absent (no in-tree producer)",
+  "body": "**Environment**\n- Found on openminion 0.1.21 (PyPI), Python 3.12, Windows 11; still present on 0.1.22 and current `dev` (`e0aa4b8d`).\n- Any provider. The turn completes normally; only the telemetry block is wrong.\n\n**Steps to reproduce**\n\nLive, with any configured provider:\n\n```python\nfrom openminion.api.runtime import APIRuntime\n\nruntime = APIRuntime.from_config(...)  # any configured provider/model\nhandle = runtime.submit_turn(\n    payload={\"session_id\": \"repro\", \"message\": \"Reply with OK.\", \"stream\": True}\n)\nresp = handle.result()\nprint(resp.stats)\nprint(resp.telemetry)\n```\n\nProvider-free, "
+ },
+ {
+  "id": 770,
+  "title": "[0.1.22] Agent.run(timeout_seconds=...) cannot extend the 300 s brain turn budget, and the budget stop is returned as a normal reply",
+  "body": "**Environment**\n- openminion 0.1.22, Python 3.12, Windows 10\n- Provider: Groq free tier (`openai/gpt-oss-20b`). Its low TPM makes each LLM call wait on rate limits, so a 3-tool turn takes several minutes.\n\n**Steps to reproduce**\n```python\nfrom openminion import Agent\n\nwith Agent(instructions=\"...\", tools=[fetch_page, save_checklist, submit_brief]) as agent:\n    result = agent.run(\"Scout this page: https://...\", timeout_seconds=600)\n    print(result.text)\n```\nUse any provider or tool combination where the turn needs more than 300 s of wall time.\n\n**Actual**\n1. The turn stops at 300 s, even thou"
+ },
+ {
+  "id": 769,
+  "title": "[0.1.22] Runtime bootstrap fails on Windows (WinError 206) because browser-playwright artifact dirs are created under the CWD even when no browser tool is used",
+  "body": "**Environment**\n- openminion 0.1.22 (`pip install openminion`), Python 3.12, Windows 10 (default MAX_PATH, long paths not enabled)\n- `OPENMINION_HOME` set to a short directory; the process CWD is a deep project directory (~190 chars)\n- Agent uses only three custom `@tool` functions. `allowed_tools` does not include any browser tool.\n\n**Steps to reproduce**\n1. `cd` into a directory whose absolute path is about 190+ characters long.\n2. `set OPENMINION_HOME=C:\\short\\om`\n3. `openminion setup --provider gemini --model <model> --no-chat`\n\n**Actual**\n```\n[FAIL] runtime.bootstrap: Runtime bootstrap fa"
+ },
+ {
+  "id": 767,
+  "title": "cli: add `config diff` so an import can be previewed before it overwrites the config",
+  "body": "`config import --force` replaces the stored config with nothing to inspect first. The only way to see what\na candidate file will do is to import it and compare afterwards, and doing that by hand is exactly when\ncredentials leak into a diff.\n\n## Proposal\n\n`openminion config diff <file>`: build the config that `config import <file>` would produce and print the\nleaf-level differences, without writing anything.\n\n- merge by default (what `config import` does), `--replace` to mirror `config import --force`\n- output: per-leaf `added` / `removed` / `changed` paths with before/after values, or `--json`"
+ },
+ {
+  "id": 766,
+  "title": "storage: empty storage.path (\"\") in agents.json resolves to data_root directory and fails with sqlite3.OperationalError",
+  "body": "### Environment\n\n- `openminion` version: `0.1.22` (also reproduced on `dev` / `main`)\n- Python: `3.12.3`\n- OS: Linux (`x86_64`)\n\n### Summary\n\nIn `agents.json`, optional path fields across `OpenMinionConfig` (`runtime.memory_root_path`, `runtime.telemetry_db_path`, `runtime.session_archive_root_path`, `identity.root`, `identity.db_path`, `runtime.daemon_log_file`) use `\"\"` (empty string) to fall back to their default location under `OPENMINION_DATA_ROOT`.\n\nBecause `openminion setup` writes an absolute host-specific path into `storage.path` (for example `/tmp/.../.openminion/state/openminion.db`"
+ },
+ {
+  "id": 759,
+  "title": "llm: add a provider cooldown registry and honour Retry-After instead of a constant retry backoff",
+  "body": "## Summary\n\nNothing in the runtime remembers that a provider just rate-limited us. The retry loop retries with a\nconstant backoff, ignores the `Retry-After` the provider sent, and every later turn starts by calling\nthe same provider again. There is no provider cooldown or breaker anywhere in the tree: a per-minute\nquota therefore costs a full attempt (and often the turn) on every turn until the window happens to\nreset.\n\nThis is a feature request for the general mechanism, not a re-report of the symptoms already tracked in\n#717 (retry ignores `Retry-After`) and #676 (a lease busy error discards"
+ },
+ {
+  "id": 757,
+  "title": "turn-input: an accepted `steer_current` is never applied or retired when its turn ends, and 20 of them wedge the session queue (QUEUE_FULL)",
+  "body": "## Summary\n\n`POST /v1/sessions/<id>/turn-inputs` with `intent=steer_current` against a **live** turn returns\n`202` with an entry marked `status=queued` and the live `target_trace_id`. If the turn finishes\nbefore the next steering hook, that entry is never applied, never marked deferred, never consumed by\na later turn and never expired — it stays `queued` with no automatic retirement. Because queued entries count against\n`max_pending_per_session` (20), repeating it makes the session refuse **all** turn inputs with\n`429 QUEUE_FULL` until each entry is dropped explicitly (`DELETE /v1/sessions/<se"
+ },
+ {
+  "id": 754,
+  "title": "cli: `mcp import --from` reports a missing or malformed source file as an internal error",
+  "body": "## Summary\n\n`openminion mcp import --from <path>` reads the source file without validating it, so the two most\nlikely user mistakes — a path that does not exist and a file that is not valid JSON — escape the\ncommand and are caught by the CLI's terminal boundary, which classifies them as `internal error`\nand tells the user to re-run with `--verbosity verbose` for a traceback. Both are input errors,\nand two sibling commands that read a user-supplied path already return a specific, structured\nfailure instead.\n\n## Cause\n\n`src/openminion/cli/commands/mcp.py:236-241` (`_mcp_import`):\n\n```python\nsour"
+ },
+ {
+  "id": 752,
+  "title": "cli: bare `openminion replay` crashes with AttributeError instead of usage",
+  "body": "## Summary\n\nA bare `openminion replay` (group name, no subcommand) dispatches into the group handler with no\nsubcommand selected and crashes with an uncaught `AttributeError` traceback at `rc=1`. Sibling\ngroups and the group's own subcommands reject the same invocation with `rc=2` and a usage line.\n\n## Cause\n\n- `src/openminion/cli/commands/replay.py:163` registers the group's subcommands with\n  `parser.add_subparsers(dest=\"replay_command\")` and no `required=True`, so argparse happily parses\n  `replay` with `replay_command` unset.\n- The handler is then invoked anyway: `src/openminion/cli/comman"
+ }
+]
