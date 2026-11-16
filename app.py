@@ -149,7 +149,13 @@ def run_online(input_path: Path, output_path: Path) -> int:
     @tool
     def get_triage_facts() -> str:
         """Return the verified, deterministic triage facts for the loaded issues."""
-        return json.dumps(facts, indent=2)
+        # Compact payload: long issue titles and pretty-printing can push the
+        # tool result past the runtime's truncation limit on larger sets.
+        compact = [
+            {**f, "title": (f["title"][:117] + "...") if len(f["title"]) > 120 else f["title"]}
+            for f in facts
+        ]
+        return json.dumps(compact)
 
     @tool
     def save_report(markdown: str) -> str:
@@ -160,6 +166,8 @@ def run_online(input_path: Path, output_path: Path) -> int:
     instructions = (
         "You are TriageMinion, an issue triage assistant for open-source maintainers. "
         "Call get_triage_facts first and base every claim on those facts only. "
+        "Copy each issue's category and priority from the facts exactly; never "
+        "re-classify an issue yourself. "
         "Write a short, clear triage report in Markdown: a summary table, the top "
         "priority items first, and what information is missing from reporters. "
         "Then call save_report with the finished report. Do not invent issues, "
@@ -175,7 +183,7 @@ def run_online(input_path: Path, output_path: Path) -> int:
         ) as agent:
             result = agent.run(
                 f"Triage the {len(issues)} loaded issues and save the report.",
-                timeout_seconds=120,
+                timeout_seconds=300,
             )
         text = getattr(result, "text", None)
         print(text if text else "Agent run finished.")

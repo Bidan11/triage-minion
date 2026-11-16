@@ -59,12 +59,59 @@ facts. In the online run the model does the final summarisation and
 prioritisation in its own words, and a maintainer reviews the draft
 before anything is applied.
 
+## Real model-backed run (2026-11-17)
+
+Provider: **OpenRouter** (OpenMinion `openrouter` preset), key supplied via
+the `OPENROUTER_API_KEY` env var. Models are swappable with
+`openminion setup --provider openrouter --model <id>`.
+
+**Samples — success.** With `cohere/north-mini-code:free` the agent called
+`get_triage_facts`, wrote its own report (summary table sorted by priority,
+top-priority section, missing-info notes) and called `save_report` itself.
+Output: `report.model.md`. All 6 issues appear with the facts' categories
+and priorities.
+
+**Real issues — partial first attempt, then a fix.** On the 10 real
+OpenMinion issues the model only received about half of the facts: the
+tool result was truncated (long titles + pretty-printed JSON), and the
+model honestly flagged this itself (`finalization_status: incomplete`,
+"only 5 complete issues were retrieved"). One truncated title also led it
+to mislabel issue 767. That run is kept as `report.real-model.partial.md`.
+Fix applied in `get_triage_facts`: compact JSON (no pretty-printing) and
+titles capped at 120 characters, plus an instruction to copy category and
+priority from the facts exactly. A clean re-run is pending — the day's
+free-model quota (50 requests/day, account-wide) was exhausted by the
+model/policy experiments below; it resets at midnight UTC.
+
+### Findings from getting the run to work
+
+1. **Proxied environments can break the SDK's HTTP client.** In our
+   sandbox, `NO_PROXY` contains bracketed IPv6 entries (`[::1]`, …).
+   `httpx` fails on them with `InvalidURL: Invalid port: ':1]'`, so every
+   provider call died before it started — while `curl` worked fine.
+   Sanitising `NO_PROXY=localhost,127.0.0.1` for SDK runs fixed it.
+2. **Custom tools block headless runs until policy allows them.** Our
+   `@tool` functions are classified risk `write` / reversibility
+   `unknown`, so the runtime demanded an interactive policy confirmation
+   and a non-interactive run stalled at the prompt. Setting
+   `action_policy.default_action: "allow"` alone did **not** lift it;
+   per-tool rules in `.openminion/agents.json` did:
+   `{"match": {"tool_name": "get_triage_facts"}, "mode": "auto"}` (same
+   for `save_report`). Worth knowing for any CI/demo automation.
+3. **Free models vary wildly for agent turns.** `nvidia/nemotron-3-ultra`
+   (free) was still thinking after 120 s (we raised the per-run deadline
+   to 300 s); `google/gemma-4-31b-it` (free) hit a provider rate limit
+   immediately; `cohere/north-mini-code:free` completed the full
+   two-tool workflow in ~45 s. OpenRouter's free tier allows 50 model
+   requests/day per account — plan demo recordings around that.
+4. **Typed errors helped.** The rate limit surfaced as a `ProviderError`
+   with a clear `RATE_LIMITED` reason, and the slow model as a
+   `TurnTimeoutError` — both handled in `app.py` without a crash.
+
 ## Still to test
 
-- Real model-backed run (tool calling + report quality) with a tool-capable
-  provider, incl. Cortensor Portal if access is granted.
-- `save_report` tool being called by the model (vs. our deterministic
-  fallback) and how often the model skips it.
+- Clean model-backed re-run on the 10 real issues with the compact-facts
+  fix (after the free quota resets), and the demo recording.
 - Behaviour on a large issue list (100+ issues): turn timeouts, context
   limits, and whether chunking per session is needed.
 - Approval flow for a "dangerous" tool variant of `save_report`.
@@ -78,3 +125,8 @@ before anything is applied.
    labels its fallback output instead of pretending the model produced it.
 3. Facts-first tool design removes most prompt-engineering fragility from a
    triage workflow.
+4. Tool results have a practical size budget: on larger inputs, keep the
+   facts payload compact or the model silently sees a truncated set (to
+   its credit, the model noticed and said so).
+5. "It works in the CLI" is not "it works headless": policy confirmations
+   and proxy env vars only show up when you run the SDK unattended.

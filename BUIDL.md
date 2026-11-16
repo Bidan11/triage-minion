@@ -3,10 +3,14 @@
 **Tagline:** An OpenMinion agent that triages GitHub issues in seconds —
 category, priority, and what's missing — so maintainers can act, not read.
 
-**Status (honest):** The workflow is verified end to end offline and through
-an echo-provider run of the Agent runtime. The real model-backed run is
-still pending a tool-capable provider key; it will be recorded for the
-demo video before submission.
+**Status (honest):** Verified end to end — offline, through an
+echo-provider run, and in a **real model-backed run via OpenRouter**
+(`cohere/north-mini-code:free`): the model called the facts tool, wrote
+the report in its own words and saved it via the save tool
+(`report.model.md`, 6 sample issues). A first model run on the 10 real
+issues exposed a tool-result truncation (kept as
+`report.real-model.partial.md`); the compact-facts fix is in and a clean
+re-run follows before submission.
 
 ## The problem
 
@@ -42,7 +46,7 @@ repository itself, triaged correctly: 8 bug, 2 feature).
   is forced for the demo run (`forced_tools=["get_triage_facts"]`), and
   the runtime is managed with a context manager.
 - Provider and timeout failures surface as typed errors
-  (`ProviderError`, `TurnTimeoutError`) with a per-run deadline of 120 s.
+  (`ProviderError`, `TurnTimeoutError`) with a per-run deadline of 300 s.
 - `--offline` mode runs the same workflow without a model, so anyone can
   reproduce the facts and the report shape with no key and no network.
 
@@ -59,8 +63,10 @@ demo reproducible.
 - Explicit sessions (`session_id="triage-minion-demo"`)
 - Context-manager runtime lifecycle
 - Typed failure handling: `ProviderError`, `TurnTimeoutError`
-- Per-run deadline (`timeout_seconds=120`)
+- Per-run deadline (`timeout_seconds=300`)
 - Echo provider for a credential-free wiring check
+- Action-policy rules (`mode: "auto"` per tool) so headless runs are not
+  blocked by interactive confirmations
 
 Full findings, including what did not work: [BUILDING_BLOCKS.md](BUILDING_BLOCKS.md).
 
@@ -84,5 +90,5 @@ Full findings, including what did not work: [BUILDING_BLOCKS.md](BUILDING_BLOCKS
 
 A ~3-minute demo outline (live run, report walkthrough, one honest
 finding) is in [SUBMISSION.md](SUBMISSION.md#demo-outline-target-3-minutes).
-The video will show a real model-backed run once the provider key is
-configured.
+The video will show the real model-backed run that is already verified
+locally (`report.model.md`).
