@@ -79,9 +79,22 @@ model honestly flagged this itself (`finalization_status: incomplete`,
 to mislabel issue 767. That run is kept as `report.real-model.partial.md`.
 Fix applied in `get_triage_facts`: compact JSON (no pretty-printing) and
 titles capped at 120 characters, plus an instruction to copy category and
-priority from the facts exactly. A clean re-run is pending — the day's
-free-model quota (50 requests/day, account-wide) was exhausted by the
-model/policy experiments below; it resets at midnight UTC.
+priority from the facts exactly.
+
+**Clean re-run — success (2026-11-17).** Compacting alone was not enough:
+the payload was only ~2.3 KB, yet the model still received it cut off
+after ~6 issues. The facts tool now **paginates** (4 issues per call, the
+model passes `offset` 0, 4, 8 and sees the total). With that, a full run
+via `openrouter/free` covered **all 10 issues** and the model called
+`save_report` itself: `report.real-model.md` — 8 bug / 2 feature, exactly
+matching the deterministic facts, #752 (bare-command crash) correctly
+surfaced as the P1 top item, missing-info notes for #752, #754, #757.
+Two honest caveats from the same session: the Cohere free endpoint
+returned `EMPTY_PROVIDER_RESPONSE` twice in a row after working earlier
+(free endpoints are flaky — the `openrouter/free` router routed around
+it), and one intermediate run printed its report as plain text instead
+of calling `save_report`, which is why the instructions now state the
+save step as a hard requirement.
 
 ### Findings from getting the run to work
 
@@ -110,8 +123,7 @@ model/policy experiments below; it resets at midnight UTC.
 
 ## Still to test
 
-- Clean model-backed re-run on the 10 real issues with the compact-facts
-  fix (after the free quota resets), and the demo recording.
+- The demo recording (screen capture of the verified run + voiceover).
 - Behaviour on a large issue list (100+ issues): turn timeouts, context
   limits, and whether chunking per session is needed.
 - Approval flow for a "dangerous" tool variant of `save_report`.

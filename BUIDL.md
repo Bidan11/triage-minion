@@ -9,8 +9,9 @@ echo-provider run, and in a **real model-backed run via OpenRouter**
 the report in its own words and saved it via the save tool
 (`report.model.md`, 6 sample issues). A first model run on the 10 real
 issues exposed a tool-result truncation (kept as
-`report.real-model.partial.md`); the compact-facts fix is in and a clean
-re-run follows before submission.
+`report.real-model.partial.md`); the facts tool now paginates, and a
+clean re-run covers all 10 real issues correctly
+(`report.real-model.md`).
 
 ## The problem
 

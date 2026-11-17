@@ -146,16 +146,24 @@ def run_online(input_path: Path, output_path: Path) -> int:
     issues = load_issues(input_path)
     facts = [classify_issue(i) for i in issues]
 
+    # Compact facts payload (short titles, no pretty-printing), served in
+    # pages: in this configuration the runtime truncates long tool results,
+    # and a 10-issue payload arrived cut off after ~6 issues.
+    compact = [
+        {**f, "title": (f["title"][:117] + "...") if len(f["title"]) > 120 else f["title"]}
+        for f in facts
+    ]
+    page_size = 4
+
     @tool
-    def get_triage_facts() -> str:
-        """Return the verified, deterministic triage facts for the loaded issues."""
-        # Compact payload: long issue titles and pretty-printing can push the
-        # tool result past the runtime's truncation limit on larger sets.
-        compact = [
-            {**f, "title": (f["title"][:117] + "...") if len(f["title"]) > 120 else f["title"]}
-            for f in facts
-        ]
-        return json.dumps(compact)
+    def get_triage_facts(offset: int = 0) -> str:
+        """Return one page of verified triage facts (4 issues per page).
+
+        Call with offset 0 first, then with the next offset, until the
+        returned page covers all issues (see the "total" field).
+        """
+        page = compact[offset : offset + page_size]
+        return json.dumps({"total": len(compact), "offset": offset, "issues": page})
 
     @tool
     def save_report(markdown: str) -> str:
@@ -165,12 +173,19 @@ def run_online(input_path: Path, output_path: Path) -> int:
 
     instructions = (
         "You are TriageMinion, an issue triage assistant for open-source maintainers. "
-        "Call get_triage_facts first and base every claim on those facts only. "
+        "Call get_triage_facts first (offset 0), then keep calling it with "
+        "the next offset (4, 8, ...) until you have collected the facts for "
+        "every issue (the result shows the total). Base every claim on those "
+        "facts only. "
         "Copy each issue's category and priority from the facts exactly; never "
-        "re-classify an issue yourself. "
+        "re-classify an issue yourself. Do not write the report until you "
+        "have the facts for all issues. "
         "Write a short, clear triage report in Markdown: a summary table, the top "
         "priority items first, and what information is missing from reporters. "
-        "Then call save_report with the finished report. Do not invent issues, "
+        "You MUST finish by calling save_report with the complete report "
+        "covering every issue exactly once - never end your turn with the "
+        "report as plain text, and never list an issue twice. "
+        "Do not invent issues, "
         "versions, or error messages that are not in the facts."
     )
 

@@ -85,8 +85,10 @@ demo outline are in [SUBMISSION.md](SUBMISSION.md).
       (`cohere/north-mini-code:free`): model called both tools and saved
       its own report — see `report.model.md`
 - [x] Public GitHub repository
-- [ ] Clean model run on the 10 real issues (compact-facts fix applied;
-      first attempt kept as `report.real-model.partial.md`) + demo video
+- [x] Clean model run on the 10 real issues (facts tool paginates after a
+      truncation finding; first attempt kept as
+      `report.real-model.partial.md`) — see `report.real-model.md`
+- [ ] Demo video
 - [ ] Submission PR to the organisers' Hackathon #5 repository
 
 ## License
