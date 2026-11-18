@@ -36,6 +36,12 @@ openminion setup --no-chat
 openminion doctor --check-turn
 ```
 
+**Note on versions:** this project is built and tested with the OpenMinion
+SDK **0.1.20** (pinned in `requirements.txt`), while the real issues in
+`real_issues.json` come from the upstream OpenMinion **0.1.22** release
+cycle — several are tagged `[0.1.22]`, and two were first reported on
+0.1.21 and confirmed still present on 0.1.22.
+
 Notes from our verified setup (OpenRouter, free model):
 
 - `openminion setup --no-chat --provider openrouter --model cohere/north-mini-code:free`
@@ -87,7 +93,7 @@ demo outline are in [SUBMISSION.md](SUBMISSION.md).
 - [x] Public GitHub repository
 - [x] Clean model run on the 10 real issues (facts tool paginates after a
       truncation finding; first attempt kept as
-      `report.real-model.partial.md`) — see `report.real-model.md`
+      `archive/report.real-model.partial.md`) — see `report.real-model.md`
 - [ ] Demo video
 - [ ] Submission PR to the organisers' Hackathon #5 repository
 

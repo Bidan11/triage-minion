@@ -76,7 +76,7 @@ OpenMinion issues the model only received about half of the facts: the
 tool result was truncated (long titles + pretty-printed JSON), and the
 model honestly flagged this itself (`finalization_status: incomplete`,
 "only 5 complete issues were retrieved"). One truncated title also led it
-to mislabel issue 767. That run is kept as `report.real-model.partial.md`.
+to mislabel issue 767. That run is kept as `archive/report.real-model.partial.md`.
 Fix applied in `get_triage_facts`: compact JSON (no pretty-printing) and
 titles capped at 120 characters, plus an instruction to copy category and
 priority from the facts exactly.
