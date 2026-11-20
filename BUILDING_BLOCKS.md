@@ -14,7 +14,7 @@ testing continues.
 | Echo provider | `openminion config init --provider echo`, then a full app run | Run completes and our fallback writes run evidence. **Finding:** echo only repeats the prompt — it cannot prove model-selected tool use, exactly as the docs warn. A tool-capable provider is required for the real demo. |
 | Error types | `ProviderError` / `TurnTimeoutError` imported and handled in `app.py` | Imports verified; live provider-failure behaviour still to be exercised. |
 
-## Design decision worth reporting
+## Design decision worth reporting (2026-11-16 — SUPERSEDED 2026-11-21)
 
 The model is **not** trusted to classify issues from scratch. Deterministic
 code computes category/priority facts first, and the agent must read them
@@ -22,6 +22,13 @@ through the facts tool (`forced_tools=["get_triage_facts"]`). This made the
 demo reproducible: the same input always produces the same facts, and the
 model's job is limited to summarising and prioritising — the part it is
 actually good at.
+
+> **Update (2026-11-21):** a code review pushed back on exactly this —
+> if code classifies and the model only writes prose, the "meaningful
+> SDK usage" is thin and the agent is not really an agent. The design
+> was inverted: the model now classifies and records structured
+> decisions; the keyword rules survive only as an offline fallback and
+> repair filler. See "Redesign after code review" below.
 
 ## Real-issues test — classifier iteration (2026-11-16)
 
@@ -121,8 +128,59 @@ save step as a hard requirement.
    with a clear `RATE_LIMITED` reason, and the slow model as a
    `TurnTimeoutError` — both handled in `app.py` without a crash.
 
+## Redesign after code review (2026-11-21)
+
+An external review of the repo raised ten findings; the code fixes
+landed the same night. What changed, and what we learned doing it:
+
+1. **Model-led classification (was: facts-first).** The agent now reads
+   raw issues through the paged `get_issue_page` tool and records each
+   decision through a new structured tool, `record_triage` (category,
+   priority, labels, missing info, one-line reason). The report is
+   rendered from those records — structured tool output, not free-text
+   prose, is what makes a model run auditable. The "never re-classify"
+   instruction is gone.
+2. **A real GitHub connection.** `app.py --github OpenMinion/openminion
+   --limit 10` fetches open issues live from the REST API
+   (unauthenticated; verified from the sandbox — `real_issues_live.json`).
+   Two API lessons: the issues endpoint **interleaves pull requests**
+   (12 of the newest 30 items were PRs), so filtering must happen
+   before counting the limit; and the unauthenticated rate limit
+   (60/hour) is ample for demos but argues for the optional token.
+   A separate `github_actions.py` applies labels and posts triage
+   comments on the **owner's own** repo: dry-run by default, `--apply`
+   to write, and it refuses repos the token does not own. Code and
+   dry-run verified; the live `--apply` demo still needs the owner's
+   token and has **not** been run yet.
+3. **Partial runs are repaired, not shipped.** The old behaviour kept a
+   model-saved report even if it covered 6 of 10 issues. Now every run
+   ends with validation against the input; gaps are filled by the
+   fallback rules and disclosed in a "Repaired entries" section.
+4. **One report format.** A single renderer serves offline, online and
+   repair paths; reports now carry full untruncated titles and
+   clickable issue links.
+5. **The fallback rules were fragile in exactly the ways a reviewer
+   would poke:** a bare "add " forced `feature`, a bare "?" forced
+   `question`, a bare "500" forced P1, and the word "security" forced
+   the security category even for a feature request *about* security.
+   All four are fixed and pinned by regression tests; "environment
+   provided" is now judged from the issue **body** only (a "[0.1.22]"
+   title tag is not the reporter's environment).
+6. **Tests exist now.** 35 pytest tests run fully offline (classifier
+   expectations on all 16 known issues, renderer, repair, fetch
+   parsing from a recorded fixture). "Offline mode" is no longer the
+   only verification story.
+
+Honest status: the redesigned **online** flow has not had a live model
+run yet — that needs a provider key. Everything above is verified at
+the code/offline/API-read level.
+
 ## Still to test
 
+- **Live model run of the redesigned (model-led) flow** — needs a
+  provider key; the key-dependent step still outstanding.
+- **Live `--apply` run of `github_actions.py`** on our own repo —
+  needs the owner's GitHub token; only the dry-run is verified.
 - The demo recording (screen capture of the verified run + voiceover).
 - Behaviour on a large issue list (100+ issues): turn timeouts, context
   limits, and whether chunking per session is needed.
@@ -135,8 +193,11 @@ save step as a hard requirement.
 2. The echo provider is a good wiring check but a misleading demo: it looks
    like a run happened while no tool was ever called. Our app therefore
    labels its fallback output instead of pretending the model produced it.
-3. Facts-first tool design removes most prompt-engineering fragility from a
-   triage workflow.
+3. Structured decision tools beat free-text reports: when the model must
+   record each classification through a tool, the result is auditable,
+   validatable, and repairable. (This replaced our earlier facts-first
+   design, where code classified and the model only wrote prose — more
+   reproducible, but barely an agent.)
 4. Tool results have a practical size budget: on larger inputs, keep the
    facts payload compact or the model silently sees a truncated set (to
    its credit, the model noticed and said so).

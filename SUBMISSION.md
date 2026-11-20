@@ -30,10 +30,11 @@
 
 1. (0:00) The problem: a maintainer facing a pile of untriaged issues.
 2. (0:30) Show `sample_issues.json` — 6 real-looking issues.
-3. (0:45) Run `python app.py` live; show the agent calling
-   `get_triage_facts`, then writing and saving the report.
+3. (0:45) Run `python app.py --github OpenMinion/openminion` live; show
+   the agent fetching issues, classifying each one itself via
+   `record_triage`, then saving the report rendered from its decisions.
 4. (1:45) Open `report.md`: security issue flagged P0, login crash P0/P1,
    docs typo P3 — and the "missing info" column.
 5. (2:30) One honest finding from BUILDING_BLOCKS.md (echo provider cannot
-   prove tool use; facts-first design).
+   prove tool use; why decisions are recorded as structured tool calls).
 6. (2:50) Close: what a maintainer does next with the draft report.
