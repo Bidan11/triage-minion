@@ -2,18 +2,28 @@
 TriageMinion - a GitHub issue triage agent built on the OpenMinion 0.1 Python SDK.
 
 Workflow (one useful, repeatable job):
-  1. Load a list of GitHub issues (JSON export or the bundled sample file).
-  2. The agent classifies each issue: category, priority, missing information.
-  3. It drafts a triage report (Markdown) a maintainer can act on directly.
-  4. Saving the report is a separate, explicit step so a human stays in control.
+  1. Load issues — from a JSON file, or fetched live from a GitHub
+     repository with ``--github owner/repo``.
+  2. The MODEL classifies each issue itself (category, priority,
+     suggested labels, missing information, a one-line reason) after
+     reading the title and body through a paged tool, and records every
+     decision through the ``record_triage`` tool.
+  3. The report is rendered from the recorded decisions by the single
+     renderer in ``report.py``. If a run ends with decisions missing
+     (a partial run), the gaps are filled by the fallback keyword
+     classifier and disclosed in the report (see ``triage.py``).
+  4. Applying labels/comments to a real repository is a separate,
+     explicit step (``github_actions.py``, dry-run by default, owner's
+     own repos only) so a human stays in control.
 
 Run modes:
-  * Online (hackathon demo): uses a real model through OpenMinion.
+  * Online (hackathon demo): a real model through OpenMinion classifies.
         python app.py --input sample_issues.json --output report.md
+        python app.py --github OpenMinion/openminion --limit 10 --output report.md
     Requires the OpenMinion SDK and a configured model-provider key
     (see README, "Setup").
-  * Offline (logic test): deterministic rule-based triage, no model needed.
-    Useful for CI and for verifying the workflow end to end.
+  * Offline (logic test): the fallback keyword classifier produces the
+    decisions; the same renderer writes the report. No model needed.
         python app.py --offline --input sample_issues.json --output report.md
 """
 
@@ -21,104 +31,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Deterministic triage logic (shared by the offline mode and used by the
-# online agent's tools so the model works from verified facts, not guesses).
-# ---------------------------------------------------------------------------
+from github_client import fetch_open_issues
+from report import ensure_complete_decisions, render_report, validate_decisions
+from triage import CATEGORIES, PRIORITIES, classify_issue, issue_url
 
-CATEGORY_SIGNALS = {
-    "bug": [
-        "error", "crash", "fails", "broken", "bug", "exception", "500",
-        "regression", "cannot", "never applied", "wedge", "stuck", "incorrect",
-    ],
-    "security": ["vulnerability", "xss", "sql injection", "token exposed", "security issue"],
-    "feature": ["feature", "add support", "add ", "would be nice", "request", "enhancement", "proposal"],
-    "docs": ["docs", "documentation", "readme", "typo", "example"],
-    "question": ["how do", "how to", "question", "help", "?"],
-}
-
-PRIORITY_SIGNALS = {
-    "P0": ["vulnerability", "token exposed", "data loss", "all users", "production down"],
-    "P1": ["crash", "regression", "500", "cannot login", "broken after"],
-    "P2": ["fails", "error", "slow", "sometimes", "cannot"],
-}
-
-
-def classify_issue(issue: dict) -> dict:
-    title = issue.get("title", "").lower()
-    body = issue.get("body", "").lower()
-    text = f"{title} {body}"
-
-    # Title signals weigh double: the title states the reporter's intent,
-    # while a body can mention risky words in passing (a feature proposal
-    # about preventing leaks is not itself a security incident).
-    scores = {}
-    for name, signals in CATEGORY_SIGNALS.items():
-        scores[name] = sum(2 for s in signals if s in title) + sum(
-            1 for s in signals if s in body
-        )
-    # A structured bug report is a strong signal on its own.
-    if "steps to reproduce" in text or "step to reproduce" in text:
-        scores["bug"] += 3
-
-    category = "needs-info"
-    best_hits = 0
-    for name, hits in scores.items():
-        if hits > best_hits:
-            category, best_hits = name, hits
-    # A strong security phrase in the title is decisive, even when the
-    # reporter also asks a question in the body ("token exposed ... how do
-    # I rotate it?" is a security report first, a question second).
-    if any(s in title for s in CATEGORY_SIGNALS["security"]):
-        category = "security"
-
-    priority = "P3"
-    for level in ("P0", "P1", "P2"):
-        if any(s in text for s in PRIORITY_SIGNALS[level]):
-            priority = level
-            break
-
-    has_version = bool(
-        re.search(r"\d+\.\d+\.\d+", text) or "version" in text or "environment" in text
-    )
-    has_steps = bool(re.search(r"steps|reproduce|expected", text))
-    missing = []
-    if not has_version and category in ("bug", "security"):
-        missing.append("version / environment")
-    if not has_steps and category in ("bug", "security"):
-        missing.append("reproduction steps")
-
-    return {
-        "id": issue.get("id"),
-        "title": issue.get("title", "(untitled)"),
-        "category": category,
-        "priority": priority,
-        "missing_info": missing,
-        "suggested_label": f"type:{category}",
-    }
-
-
-def build_report(results: list[dict], source: str) -> str:
-    lines = [
-        "# Triage Report",
-        "",
-        f"Source: `{source}` - {len(results)} issue(s) triaged.",
-        "",
-        "| # | Issue | Category | Priority | Missing info | Suggested label |",
-        "|---|-------|----------|----------|--------------|-----------------|",
-    ]
-    for r in results:
-        missing = ", ".join(r["missing_info"]) if r["missing_info"] else "-"
-        title = str(r["title"]).replace("|", "/")
-        lines.append(
-            f"| {r['id']} | {title} | {r['category']} | {r['priority']} | {missing} | `{r['suggested_label']}` |"
-        )
-    lines += ["", "Next step: a maintainer reviews this draft before any label is applied.", ""]
-    return "\n".join(lines)
+PAGE_SIZE = 4  # issues per tool page — see BUILDING_BLOCKS (truncation finding)
+BODY_CAP = 1200  # chars of body per issue in the tool payload
 
 
 def load_issues(path: Path) -> list[dict]:
@@ -129,10 +50,12 @@ def load_issues(path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Online mode: OpenMinion agent with run-scoped tools.
+# Online mode: OpenMinion agent. The model classifies; decisions are
+# recorded through record_triage; the report renders from the records.
 # ---------------------------------------------------------------------------
 
-def run_online(input_path: Path, output_path: Path) -> int:
+def run_online(issues: list[dict], source: str, output_path: Path,
+               repo: str | None) -> int:
     try:
         from openminion import Agent, ProviderError, TurnTimeoutError, tool
     except ImportError:
@@ -143,57 +66,122 @@ def run_online(input_path: Path, output_path: Path) -> int:
         )
         return 2
 
-    issues = load_issues(input_path)
-    facts = [classify_issue(i) for i in issues]
+    recorded: list[dict] = []
+    by_id = {i.get("id"): i for i in issues}
 
-    # Compact facts payload (short titles, no pretty-printing), served in
-    # pages: in this configuration the runtime truncates long tool results,
-    # and a 10-issue payload arrived cut off after ~6 issues.
-    compact = [
-        {**f, "title": (f["title"][:117] + "...") if len(f["title"]) > 120 else f["title"]}
-        for f in facts
-    ]
-    page_size = 4
+    def _page(offset: int) -> list[dict]:
+        page = []
+        for issue in issues[offset : offset + PAGE_SIZE]:
+            body = issue.get("body") or ""
+            if len(body) > BODY_CAP:
+                body = body[:BODY_CAP] + "\n[body truncated for the tool payload]"
+            page.append(
+                {
+                    "id": issue.get("id"),
+                    "title": issue.get("title", "(untitled)"),
+                    "body": body,
+                    "labels": issue.get("labels", []),
+                    "created_at": issue.get("created_at"),
+                }
+            )
+        return page
 
     @tool
-    def get_triage_facts(offset: int = 0) -> str:
-        """Return one page of verified triage facts (4 issues per page).
+    def get_issue_page(offset: int = 0) -> str:
+        """Return one page of raw issues (4 per page) for you to triage.
 
-        Call with offset 0 first, then with the next offset, until the
-        returned page covers all issues (see the "total" field).
+        Call with offset 0 first, then 4, 8, ... until the page covers
+        every issue (see the "total" field). Each issue has its full
+        title and body — read them and decide the triage yourself.
         """
-        page = compact[offset : offset + page_size]
-        return json.dumps({"total": len(compact), "offset": offset, "issues": page})
+        return json.dumps(
+            {"total": len(issues), "offset": offset, "issues": _page(offset)}
+        )
 
     @tool
-    def save_report(markdown: str) -> str:
-        """Save the final triage report to the output file chosen by the operator."""
-        output_path.write_text(markdown, encoding="utf-8")
-        return f"Saved report to {output_path}"
+    def record_triage(issue_id: int, category: str, priority: str,
+                      labels: str, missing_info: str, reason: str) -> str:
+        """Record YOUR triage decision for one issue.
+
+        category: one of bug, feature, docs, security, question.
+        priority: one of P0, P1, P2, P3.
+        labels: comma-separated suggested labels (e.g. "type:bug, priority:P1").
+        missing_info: semicolon-separated items the reporter still owes
+        (e.g. "version / environment; reproduction steps"), or "none".
+        reason: one short line explaining the decision.
+        """
+        issue = by_id.get(issue_id)
+        if issue is None:
+            return f"Unknown issue id {issue_id}; no decision recorded."
+        category = category.strip().lower()
+        priority = priority.strip().upper()
+        if category not in CATEGORIES:
+            return f"Invalid category {category!r}; use one of {', '.join(CATEGORIES)}."
+        if priority not in PRIORITIES:
+            return f"Invalid priority {priority!r}; use one of {', '.join(PRIORITIES)}."
+        label_list = [l.strip() for l in labels.split(",") if l.strip()]
+        if not label_list:
+            label_list = [f"type:{category}", f"priority:{priority}"]
+        missing = [
+            m.strip() for m in missing_info.split(";")
+            if m.strip() and m.strip().lower() != "none"
+        ]
+        decision = {
+            "id": issue_id,
+            "title": issue.get("title", "(untitled)"),
+            "url": issue_url(issue, repo),
+            "category": category,
+            "priority": priority,
+            "missing_info": missing,
+            "suggested_labels": label_list,
+            "reason": reason.strip(),
+            "decided_by": "model",
+        }
+        recorded[:] = [d for d in recorded if d["id"] != issue_id] + [decision]
+        return f"Recorded triage for #{issue_id} ({len(recorded)}/{len(issues)} recorded)."
+
+    @tool
+    def save_report() -> str:
+        """Render and save the final report from your recorded decisions.
+
+        Only succeeds once every issue has a recorded decision; if any
+        are missing it tells you which ones and saves nothing.
+        """
+        check = validate_decisions(issues, recorded)
+        if check["missing"]:
+            return (
+                "Cannot save yet — no triage recorded for issue(s): "
+                + ", ".join(f"#{i}" for i in check["missing"])
+                + ". Record those decisions, then call save_report again."
+            )
+        complete, _ = ensure_complete_decisions(issues, recorded, repo=repo)
+        output_path.write_text(render_report(complete, source), encoding="utf-8")
+        return f"Saved report covering all {len(complete)} issues to {output_path}"
 
     instructions = (
-        "You are TriageMinion, an issue triage assistant for open-source maintainers. "
-        "Call get_triage_facts first (offset 0), then keep calling it with "
-        "the next offset (4, 8, ...) until you have collected the facts for "
-        "every issue (the result shows the total). Base every claim on those "
-        "facts only. "
-        "Copy each issue's category and priority from the facts exactly; never "
-        "re-classify an issue yourself. Do not write the report until you "
-        "have the facts for all issues. "
-        "Write a short, clear triage report in Markdown: a summary table, the top "
-        "priority items first, and what information is missing from reporters. "
-        "You MUST finish by calling save_report with the complete report "
-        "covering every issue exactly once - never end your turn with the "
-        "report as plain text, and never list an issue twice. "
-        "Do not invent issues, "
-        "versions, or error messages that are not in the facts."
+        "You are TriageMinion, an issue triage agent for open-source maintainers. "
+        "Your job is to classify every loaded issue YOURSELF. "
+        "Call get_issue_page first (offset 0), then keep calling it with the "
+        "next offset (4, 8, ...) until you have read every issue (the result "
+        "shows the total). "
+        "For each issue, judge from its title and body: a category (bug, "
+        "feature, docs, security, question), a priority (P0 most urgent to "
+        "P3), suggested labels, and — for bugs and security reports — what "
+        "information is missing from the reporter (version/environment is "
+        "provided only if the BODY states it, not the title; reproduction "
+        "steps only if the body gives them). "
+        "Record each decision by calling record_triage before moving on. "
+        "When every issue is recorded, call save_report to write the final "
+        "report. Never invent issues, versions, or error messages that are "
+        "not in the issue text, and never end your turn before save_report "
+        "succeeds."
     )
 
     try:
         with Agent(
             instructions=instructions,
-            tools=[get_triage_facts, save_report],
-            forced_tools=["get_triage_facts"],
+            tools=[get_issue_page, record_triage, save_report],
+            forced_tools=["get_issue_page"],
             session_id="triage-minion-demo",
         ) as agent:
             result = agent.run(
@@ -209,18 +197,28 @@ def run_online(input_path: Path, output_path: Path) -> int:
         print(f"Agent turn timed out: {exc}", file=sys.stderr)
         return 4
 
-    if not output_path.exists():
-        # Fall back to the deterministic report so the run always leaves evidence.
-        output_path.write_text(build_report(facts, str(input_path)), encoding="utf-8")
-        print("Note: wrote the deterministic report as run evidence.")
+    # Fix 5: whatever state the run ended in, the final report must
+    # cover every issue exactly once. Gaps are filled by the fallback
+    # classifier and disclosed in the report's "Repaired entries".
+    complete, repaired = ensure_complete_decisions(issues, recorded, repo=repo)
+    output_path.write_text(render_report(complete, source), encoding="utf-8")
+    if repaired:
+        print(
+            "Note: model run left "
+            f"{len(repaired)} issue(s) unrecorded ({', '.join(f'#{i}' for i in repaired)}); "
+            "the final report fills them with labelled fallback decisions."
+        )
+    else:
+        print(f"Report validated: all {len(complete)} issue(s) covered exactly once.")
     return 0
 
 
-def run_offline(input_path: Path, output_path: Path) -> int:
-    issues = load_issues(input_path)
-    results = [classify_issue(i) for i in issues]
-    output_path.write_text(build_report(results, str(input_path)), encoding="utf-8")
-    print(f"Triaged {len(results)} issue(s) -> {output_path}")
+def run_offline(issues: list[dict], source: str, output_path: Path,
+                repo: str | None) -> int:
+    decisions = [classify_issue(i, repo=repo) for i in issues]
+    complete, _ = ensure_complete_decisions(issues, decisions, repo=repo)
+    output_path.write_text(render_report(complete, source), encoding="utf-8")
+    print(f"Triaged {len(complete)} issue(s) -> {output_path}")
     return 0
 
 
@@ -228,18 +226,44 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="TriageMinion - OpenMinion issue triage agent")
     parser.add_argument("--input", default="sample_issues.json", help="JSON file with issues")
     parser.add_argument("--output", default="report.md", help="Where to write the triage report")
-    parser.add_argument("--offline", action="store_true", help="Deterministic test mode, no model")
+    parser.add_argument("--offline", action="store_true",
+                        help="Fallback keyword decisions, no model")
+    parser.add_argument("--github", default=None, metavar="OWNER/REPO",
+                        help="Fetch open issues live from this GitHub repo instead of --input")
+    parser.add_argument("--limit", type=int, default=10,
+                        help="How many issues to fetch with --github (default 10)")
+    parser.add_argument("--save-fetched", default="real_issues_live.json",
+                        help="Where to save issues fetched with --github")
+    parser.add_argument("--repo", default=None, metavar="OWNER/REPO",
+                        help="Repo slug used to build issue links for JSON inputs without html_url")
     args = parser.parse_args()
 
-    input_path = Path(args.input)
     output_path = Path(args.output)
-    if not input_path.exists():
-        print(f"Input file not found: {input_path}", file=sys.stderr)
-        return 1
+    repo = args.repo or args.github
+
+    if args.github:
+        try:
+            issues = fetch_open_issues(args.github, limit=args.limit)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        Path(args.save_fetched).write_text(
+            json.dumps(issues, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        source = f"github:{args.github}"
+        print(f"Fetched {len(issues)} open issue(s) from {args.github} "
+              f"-> {args.save_fetched}")
+    else:
+        input_path = Path(args.input)
+        if not input_path.exists():
+            print(f"Input file not found: {input_path}", file=sys.stderr)
+            return 1
+        issues = load_issues(input_path)
+        source = str(input_path)
 
     if args.offline:
-        return run_offline(input_path, output_path)
-    return run_online(input_path, output_path)
+        return run_offline(issues, source, output_path, repo)
+    return run_online(issues, source, output_path, repo)
 
 
 if __name__ == "__main__":
