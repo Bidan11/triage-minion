@@ -1,0 +1,70 @@
+[
+  {
+    "number": 821,
+    "title": "fetch URL policy crashes or misclassifies malformed IPv6 URLs, invalid/zero ports, and embedded whitespace or control characters",
+    "body": "### Summary\n\n`enforce_url_policy` (`src/openminion/tools/fetch/policy.py`) and redirect resolution in `CoreHttpFetchProvider.fetch` (`src/openminion/tools/fetch/providers/core_http.py:296`) miss four URL syntax boundaries before SSRF resolution or `urllib.request` connection dispatch:\n\n1. **Malforme",
+    "html_url": "https://github.com/openminion/openminion/issues/821",
+    "labels": [],
+    "created_at": "2026-11-20T17:00:56Z",
+    "url": "https://api.github.com/repos/openminion/openminion/issues/821"
+  },
+  {
+    "number": 813,
+    "title": "tool: add file.mkdir and file.copy to the file family",
+    "body": "**Gap.** The file family ships `file.list_dir`, `file.read`, `file.read_range`, `file.write`, `file.find`, `file.search`, `file.edit` and `file.trash`. There is no tool that creates a directory, and none that copies a file. Workspace setup therefore needs `file.write` to a path whose parents it happ",
+    "html_url": "https://github.com/openminion/openminion/issues/813",
+    "labels": [
+      {
+        "id": 11313194545,
+        "node_id": "LA_kwDOTCvjEc8AAAAColGmMQ",
+        "url": "https://api.github.com/repos/openminion/openminion/labels/enhancement",
+        "name": "enhancement",
+        "color": "a2eeef",
+        "default": true,
+        "description": "New feature or request",
+        "archived_at": null,
+        "archived_by": null
+      },
+      {
+        "id": 12695156099,
+        "node_id": "LA_kwDOTCvjEc8AAAAC9LC1gw",
+        "url": "https://api.github.com/repos/openminion/openminion/labels/area:tools",
+        "name": "area:tools",
+        "color": "1D76DB",
+        "default": false,
+        "description": "Tool registration, exposure, invocation, and results",
+        "archived_at": null,
+        "archived_by": null
+      },
+      {
+        "id": 12780955589,
+        "node_id": "LA_kwDOTCvjEc8AAAAC-c3nxQ",
+        "url": "https://api.github.com/repos/openminion/openminion/labels/status:contributor-in-progress",
+        "name": "status:contributor-in-progress",
+        "color": "0E8A16",
+        "default": false,
+        "description": "Contributor has claimed the fix and provided an ETA; coordinate before duplicating work",
+        "archived_at": null,
+        "archived_by": null
+      }
+    ],
+    "created_at": "2026-11-19T19:56:12Z",
+    "url": "https://api.github.com/repos/openminion/openminion/issues/813"
+  },
+  {
+    "number": 822,
+    "title": "fix(tools): reject malformed IPv6, ports, and control chars in fetch URLs (Refs #821)",
+    "body": "### Summary\n\nRejects embedded whitespace or ASCII control characters, malformed bracketed IPv6 URLs, non-numeric or out-of-range TCP ports, and port `0` with `INVALID_URL` at the shared `enforce_url_p",
+    "html_url": "https://github.com/openminion/openminion/pull/822",
+    "labels": [],
+    "created_at": "2026-11-20T17:03:06Z",
+    "url": "https://api.github.com/repos/openminion/openminion/issues/822",
+    "pull_request": {
+      "url": "https://api.github.com/repos/openminion/openminion/pulls/822",
+      "html_url": "https://github.com/openminion/openminion/pull/822",
+      "diff_url": "https://github.com/openminion/openminion/pull/822.diff",
+      "patch_url": "https://github.com/openminion/openminion/pull/822.patch",
+      "merged_at": null
+    }
+  }
+]

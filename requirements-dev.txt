@@ -1,0 +1,2 @@
+# Development/test only — the app itself needs just requirements.txt.
+pytest>=8.0
