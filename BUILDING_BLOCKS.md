@@ -8,7 +8,7 @@ testing continues.
 | Building block | How we used it | Result |
 |---|---|---|
 | Python SDK install | `pip install openminion==0.1.20` in a fresh venv (Python 3.12) | Works. The documented import check (`Agent, ProviderError, TurnTimeoutError, tool`, `openminion.api` types) passes. |
-| Decorated tools | `@tool` on `get_triage_facts` and `save_report`, passed via `tools=[...]` | Registered as documented; exposed only for the run. |
+| Decorated tools | `@tool` on `get_issue_page`, `record_triage` and `save_report`, passed via `tools=[...]` | Registered as documented; exposed only for the run. |
 | Sessions | Explicit `session_id="triage-minion-demo"` | Run completes inside the named session; session id is returned on the result. |
 | Runtime lifecycle | `with Agent(...) as agent:` context manager | Runtime closes cleanly at the end of the run, no hanging process. |
 | Echo provider | `openminion config init --provider echo`, then a full app run | Run completes and our fallback writes run evidence. **Finding:** echo only repeats the prompt — it cannot prove model-selected tool use, exactly as the docs warn. A tool-capable provider is required for the real demo. |
@@ -116,8 +116,8 @@ save step as a hard requirement.
    and a non-interactive run stalled at the prompt. Setting
    `action_policy.default_action: "allow"` alone did **not** lift it;
    per-tool rules in `.openminion/agents.json` did:
-   `{"match": {"tool_name": "get_triage_facts"}, "mode": "auto"}` (same
-   for `save_report`). Worth knowing for any CI/demo automation.
+   `{"match": {"tool_name": "get_issue_page"}, "mode": "auto"}` (same
+   for `record_triage` and `save_report`). Worth knowing for any CI/demo automation.
 3. **Free models vary wildly for agent turns.** `nvidia/nemotron-3-ultra`
    (free) was still thinking after 120 s (we raised the per-run deadline
    to 300 s); `google/gemma-4-31b-it` (free) hit a provider rate limit
