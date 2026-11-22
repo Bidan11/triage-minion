@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "title": "App crashes on startup when the config file is missing",
+    "body": "Steps to reproduce: install the tool and run it in a folder with no config file.\n\nExpected: a friendly error message.\nActual: it crashes with a traceback and exit code 1.\n\nVersion 0.1.0 on Windows 11.",
+    "html_url": "https://github.com/Bidan11/triage-minion/issues/1"
+  },
+  {
+    "id": 2,
+    "title": "Add a dark mode option for the report page",
+    "body": "Please add a dark mode option for the report page. It would help when reviewing triage reports at night. A simple toggle in the header would be enough.",
+    "html_url": "https://github.com/Bidan11/triage-minion/issues/2"
+  }
+]
