@@ -5,6 +5,9 @@ report.md
 # Demo recording scratch (kept locally for re-renders, never pushed)
 demo-run.typescript
 demo-run.timing
+demo-run2.typescript
+demo-run3.typescript
+demo-run3.timing
 demo-test.typescript
 demo-test.timing
 report.test-capture.md

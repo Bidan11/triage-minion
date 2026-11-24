@@ -1,18 +1,136 @@
 # Building Blocks Tested — TriageMinion
 
 For Cortensor Hackathon #5. Honest notes: verified facts only, updated as
-testing continues.
+testing continues. Format: a summary table first, then each finding
+written as a reproducible mini bug report (steps, expected vs actual,
+workaround we shipped).
 
-## Used and verified (2026-11-16)
+## Summary — blocks used, and how each behaved
 
-| Building block | How we used it | Result |
+| Building block | How we used it | Worked / Didn't work |
 |---|---|---|
-| Python SDK install | `pip install openminion==0.1.20` in a fresh venv (Python 3.12) | Works. The documented import check (`Agent, ProviderError, TurnTimeoutError, tool`, `openminion.api` types) passes. |
-| Decorated tools | `@tool` on `get_issue_page`, `record_triage` and `save_report`, passed via `tools=[...]` | Registered as documented; exposed only for the run. |
-| Sessions | Explicit `session_id="triage-minion-demo"` | Run completes inside the named session; session id is returned on the result. |
-| Runtime lifecycle | `with Agent(...) as agent:` context manager | Runtime closes cleanly at the end of the run, no hanging process. |
-| Echo provider | `openminion config init --provider echo`, then a full app run | Run completes and our fallback writes run evidence. **Finding:** echo only repeats the prompt — it cannot prove model-selected tool use, exactly as the docs warn. A tool-capable provider is required for the real demo. |
-| Error types | `ProviderError` / `TurnTimeoutError` imported and handled in `app.py` | Imports verified; live provider-failure behaviour still to be exercised. |
+| Python SDK install | `pip install openminion==0.1.20` in a fresh venv (Python 3.12); documented import check (`Agent, ProviderError, TurnTimeoutError, tool`, `openminion.api` types) | **Worked.** Imports pass as documented. Pinning the version matters — the API surface is version-specific. |
+| Decorated tools (`@tool`) | `get_issue_page`, `record_triage`, `save_report` passed via `tools=[...]`, exposed only for the run | **Worked**, with two rough edges: tool results can arrive truncated (Finding 1) and custom tools block headless runs until policy allows them (Finding 2). |
+| Structured decision tool | `record_triage`: the model records category / priority / labels / missing info / reason as enum-validated data; the report renders from the records | **Worked.** This is what makes a model run auditable, validatable and repairable — the core of the current design. |
+| Tool-result paging | `get_issue_page` returns 4 issues per call; the model pages with `offset` 0, 4, 8 | **Worked** — shipped as the workaround for Finding 1 (truncation). |
+| Action policy / permissions | Per-tool rules `{"match": {"tool_name": "..."}, "mode": "auto"}` in `.openminion/agents.json` | **Didn't work as first configured** — `action_policy.default_action: "allow"` alone did not lift the interactive confirmation; per-tool rules did (Finding 2). Rules are name-based, so a tool rename silently re-blocks runs (also Finding 2). |
+| Sessions | Explicit `session_id="triage-minion-demo"` | **Worked.** Run completes inside the named session; session id returned on the result. |
+| Runtime lifecycle | `with Agent(...) as agent:` context manager | **Worked.** Runtime closes cleanly, no hanging process. |
+| Forced tools | `forced_tools=["get_issue_page"]` so the demo always exercises the issue-page tool | **Worked.** (Under the previous design, forcing *both* tools caused `EMPTY_PROVIDER_RESPONSE`; forcing the read tool only was stable.) |
+| Provider — OpenRouter preset | `openrouter` preset, key via `OPENROUTER_API_KEY` env var; free models (`openrouter/free`, `cohere/north-mini-code:free`) | **Worked, inconsistently** — free endpoints are flaky: empty responses, rate limits, and runs that stop early (Finding 3). |
+| Provider — echo | `openminion config init --provider echo`, full app run | **Worked as a wiring check only.** Echo repeats the prompt; it cannot prove model-selected tool use, exactly as the docs warn. A tool-capable provider is required for any real demo. |
+| Typed error handling | `ProviderError` / `TurnTimeoutError` handled in `app.py`; per-run deadline `timeout_seconds=300` | **Worked.** Rate limits surfaced as `ProviderError` with a clear `RATE_LIMITED` reason; a slow model as `TurnTimeoutError` — no crashes. |
+| Report validation + repair | After any run, recorded decisions are validated against the input; `save_report` refuses to save while decisions are missing; gaps are fallback-filled and disclosed | **Worked** — shipped after Finding 4 (partial runs were previously saved silently). |
+| Diagnostics from the model itself | The model flagged its own incomplete input in the truncated run (`finalization_status: incomplete`, "only 5 complete issues were retrieved") | **Worked** — the agent noticed the truncation before we did; that honesty is what made Finding 1 diagnosable. |
+| Live GitHub fetch (our code, SDK-adjacent) | `app.py --github OpenMinion/openminion --limit 10` against the public REST API | **Worked**, with an API gotcha: the issues endpoint interleaves pull requests (Finding 6). |
+| Own-repo actions (our code) | `github_actions.py`: dry-run plan by default; `--apply` posts labels + a triage comment; refuses repos the token does not own | **Worked live (2026-11-23)** on our own repo — issues #1 and #2 of Bidan11/triage-minion carry real TriageMinion labels and comments. |
+
+## Findings — mini bug reports
+
+### Finding 1: Tool results arrive truncated on medium-sized payloads
+
+- **Steps to reproduce:** Give the agent a tool that returns the facts
+  for 10 GitHub issues at once (title + category + priority + missing
+  info per issue). First attempt: pretty-printed JSON with full titles.
+  Second attempt: compact JSON, total payload ≈ 2.3 KB.
+- **Expected:** The model receives the complete tool result both times —
+  2.3 KB is a small payload.
+- **Actual:** Both times the model received the result cut off after
+  ~6 of the 10 issues. With the pretty-printed payload it flagged the
+  run `incomplete` itself and reported only 5 complete issues; one
+  truncated title also led it to mislabel issue #767. The truncated
+  first attempt is kept at `archive/report.real-model.partial.md`.
+- **Workaround we shipped:** Paginate the tool — `get_issue_page`
+  returns 4 issues per call and the model pages through with `offset`.
+  With paging, a full run covered all 10 issues. (This finding is our
+  bonus-track bug candidate — see SUBMISSION.md.)
+
+### Finding 2: Custom tools block headless runs; policy is name-based
+
+- **Steps to reproduce:** Register custom `@tool` functions (classified
+  risk `write` / reversibility `unknown`) and run the agent
+  non-interactively (stdin closed, e.g. in CI or a screen recording).
+  Then, separately: set `action_policy.default_action: "allow"` in
+  `.openminion/agents.json` and run again. Finally, rename a tool and
+  run once more without touching the config.
+- **Expected:** A documented global allow setting lets the run proceed
+  unattended; renaming a tool does not silently change policy behaviour.
+- **Actual:** The run stalls at an interactive policy confirmation.
+  `default_action: "allow"` alone did **not** lift it; only per-tool
+  rules — `{"match": {"tool_name": "get_issue_page"}, "mode": "auto"}`
+  (and likewise for `record_triage`, `save_report`) — let the run
+  proceed. And because the rules match by tool *name*, when our tools
+  were renamed during the 2026-11-21 redesign, the stale rule for the
+  old tool name was silently useless and the new tools had no rules
+  until we added them — the same headless block would have returned.
+- **Workaround we shipped:** Per-tool `mode: "auto"` rules for all
+  three current tool names, documented in the README setup section;
+  the rule names are now part of our pre-run checklist.
+
+### Finding 3: Free models are inconsistent agent drivers
+
+- **Steps to reproduce:** Run the same agent workflow on OpenRouter
+  free models: `nvidia/nemotron-3-ultra-550b-a55b:free`,
+  `google/gemma-4-31b-it:free`, `cohere/north-mini-code:free`,
+  `openrouter/free`.
+- **Expected:** Roughly comparable completion of a simple
+  read → record → save workflow.
+- **Actual:** Nemotron was still thinking after 120 s (we raised the
+  per-run deadline to 300 s); Gemma hit a provider rate limit
+  immediately; Cohere completed the full workflow in ~45 s but also
+  returned `EMPTY_PROVIDER_RESPONSE` twice in a row in a later session;
+  on 2026-11-23 the same workflow produced one run where the model
+  recorded 7/10 decisions (`report.live-model.md`) and a later filmed
+  run where it recorded only 1/10 before stopping
+  (`report.live-model-v3.md`). OpenRouter's free tier allows 50 model
+  requests/day per account, which also caps retakes.
+- **Workaround we shipped:** Design for unreliable models instead of
+  trusting them — structured `record_triage` decisions, validation of
+  coverage after every run, disclosed fallback repair (Finding 4), and
+  the `openrouter/free` router as the default so routing can move
+  between endpoints.
+
+### Finding 4: A partial model run used to save a partial report, silently
+
+- **Steps to reproduce:** (Previous design.) Let a model run end after
+  it has recorded decisions for only some of the input issues, then
+  call the save step.
+- **Expected:** The save step refuses, or the report clearly marks the
+  missing coverage.
+- **Actual:** The old behaviour kept a model-saved report even if it
+  covered 6 of 10 issues, with no marker that 4 were missing. A
+  "successful" run could ship an incomplete triage.
+- **Workaround we shipped:** Every run now ends with validation
+  against the input: duplicates collapse, missing decisions are filled
+  by the fallback rules and disclosed in a "Repaired entries" section,
+  and `save_report` refuses to save while decisions are missing,
+  telling the model which issue ids remain. Pinned by tests.
+
+### Finding 5: Bracketed IPv6 in `NO_PROXY` breaks the SDK's HTTP client *(environment quirk, not an SDK bug)*
+
+- **Steps to reproduce:** In a proxied sandbox whose `no_proxy`
+  contains bracketed IPv6 entries (`[::1]`, …), make any provider call
+  through the SDK.
+- **Expected:** The provider call goes through, as it does with `curl`
+  in the same environment.
+- **Actual:** `httpx` fails with `InvalidURL: Invalid port: ':1]'` and
+  every provider call dies before it starts.
+- **Workaround we shipped:** Run SDK commands with
+  `NO_PROXY=localhost,127.0.0.1`. We label this an environment quirk —
+  the malformed value is ours, not the SDK's — and document it so other
+  sandbox/CI users recognise the symptom.
+
+### Finding 6: The GitHub issues endpoint interleaves pull requests
+
+- **Steps to reproduce:** Fetch the newest 30 items from
+  `GET /repos/OpenMinion/openminion/issues` and count them as issues.
+- **Expected:** 30 issues.
+- **Actual:** 12 of the newest 30 items were pull requests. Any client
+  that counts before filtering silently under-fetches.
+- **Workaround we shipped:** Our fetch client filters out PR items
+  first and keeps paging until it has `limit` real issues; parsing is
+  pinned by a test against a recorded real API payload that includes a
+  PR item.
 
 ## Design decision worth reporting (2026-11-16 — SUPERSEDED 2026-11-21)
 
@@ -61,72 +179,10 @@ issues classify correctly**, including sample 104 as security / P0.
 Reports: `report.real-issues.md`, `report.example.md`.
 
 Honest limit: a keyword classifier is a **demo aid**, not the product. It
-exists so the demo is reproducible and the model starts from verified
-facts. In the online run the model does the final summarisation and
-prioritisation in its own words, and a maintainer reviews the draft
-before anything is applied.
-
-## Real model-backed run (2026-11-17)
-
-Provider: **OpenRouter** (OpenMinion `openrouter` preset), key supplied via
-the `OPENROUTER_API_KEY` env var. Models are swappable with
-`openminion setup --provider openrouter --model <id>`.
-
-**Samples — success.** With `cohere/north-mini-code:free` the agent called
-`get_triage_facts`, wrote its own report (summary table sorted by priority,
-top-priority section, missing-info notes) and called `save_report` itself.
-Output: `report.model.md`. All 6 issues appear with the facts' categories
-and priorities.
-
-**Real issues — partial first attempt, then a fix.** On the 10 real
-OpenMinion issues the model only received about half of the facts: the
-tool result was truncated (long titles + pretty-printed JSON), and the
-model honestly flagged this itself (`finalization_status: incomplete`,
-"only 5 complete issues were retrieved"). One truncated title also led it
-to mislabel issue 767. That run is kept as `archive/report.real-model.partial.md`.
-Fix applied in `get_triage_facts`: compact JSON (no pretty-printing) and
-titles capped at 120 characters, plus an instruction to copy category and
-priority from the facts exactly.
-
-**Clean re-run — success (2026-11-17).** Compacting alone was not enough:
-the payload was only ~2.3 KB, yet the model still received it cut off
-after ~6 issues. The facts tool now **paginates** (4 issues per call, the
-model passes `offset` 0, 4, 8 and sees the total). With that, a full run
-via `openrouter/free` covered **all 10 issues** and the model called
-`save_report` itself: `report.real-model.md` — 8 bug / 2 feature, exactly
-matching the deterministic facts, #752 (bare-command crash) correctly
-surfaced as the P1 top item, missing-info notes for #752, #754, #757.
-Two honest caveats from the same session: the Cohere free endpoint
-returned `EMPTY_PROVIDER_RESPONSE` twice in a row after working earlier
-(free endpoints are flaky — the `openrouter/free` router routed around
-it), and one intermediate run printed its report as plain text instead
-of calling `save_report`, which is why the instructions now state the
-save step as a hard requirement.
-
-### Findings from getting the run to work
-
-1. **Proxied environments can break the SDK's HTTP client.** In our
-   sandbox, `NO_PROXY` contains bracketed IPv6 entries (`[::1]`, …).
-   `httpx` fails on them with `InvalidURL: Invalid port: ':1]'`, so every
-   provider call died before it started — while `curl` worked fine.
-   Sanitising `NO_PROXY=localhost,127.0.0.1` for SDK runs fixed it.
-2. **Custom tools block headless runs until policy allows them.** Our
-   `@tool` functions are classified risk `write` / reversibility
-   `unknown`, so the runtime demanded an interactive policy confirmation
-   and a non-interactive run stalled at the prompt. Setting
-   `action_policy.default_action: "allow"` alone did **not** lift it;
-   per-tool rules in `.openminion/agents.json` did:
-   `{"match": {"tool_name": "get_issue_page"}, "mode": "auto"}` (same
-   for `record_triage` and `save_report`). Worth knowing for any CI/demo automation.
-3. **Free models vary wildly for agent turns.** `nvidia/nemotron-3-ultra`
-   (free) was still thinking after 120 s (we raised the per-run deadline
-   to 300 s); `google/gemma-4-31b-it` (free) hit a provider rate limit
-   immediately; `cohere/north-mini-code:free` completed the full
-   two-tool workflow in ~45 s. OpenRouter's free tier allows 50 model
-   requests/day per account — plan demo recordings around that.
-4. **Typed errors helped.** The rate limit surfaced as a `ProviderError`
-   with a clear `RATE_LIMITED` reason, and the slow model as a
-   `TurnTimeoutError` — both handled in `app.py` without a crash.
+exists so the demo is reproducible offline and so incomplete model runs
+can be repaired with disclosed, deterministic decisions. In the online
+run the model classifies; a maintainer reviews the draft before
+anything is applied.
 
 ## Redesign after code review (2026-11-21)
 
@@ -149,13 +205,15 @@ landed the same night. What changed, and what we learned doing it:
    (60/hour) is ample for demos but argues for the optional token.
    A separate `github_actions.py` applies labels and posts triage
    comments on the **owner's own** repo: dry-run by default, `--apply`
-   to write, and it refuses repos the token does not own. Code and
-   dry-run verified; the live `--apply` demo still needs the owner's
-   token and has **not** been run yet.
+   to write, and it refuses repos the token does not own.
+   **Update (2026-11-23):** the live `--apply` demo has now been run —
+   issues #1 and #2 of Bidan11/triage-minion received real labels and
+   triage comments.
 3. **Partial runs are repaired, not shipped.** The old behaviour kept a
    model-saved report even if it covered 6 of 10 issues. Now every run
    ends with validation against the input; gaps are filled by the
-   fallback rules and disclosed in a "Repaired entries" section.
+   fallback rules and disclosed in a "Repaired entries" section
+   (Finding 4).
 4. **One report format.** A single renderer serves offline, online and
    repair paths; reports now carry full untruncated titles and
    clickable issue links.
@@ -171,22 +229,21 @@ landed the same night. What changed, and what we learned doing it:
    parsing from a recorded fixture). "Offline mode" is no longer the
    only verification story.
 
-Honest status: the redesigned **online** flow has not had a live model
-run yet — that needs a provider key. Everything above is verified at
-the code/offline/API-read level.
+**Live verification of the redesign (2026-11-23).** The model-led flow
+has now had real model runs via OpenRouter: `report.live-model.md`
+(model recorded 7/10 decisions itself on the live-fetched issues;
+3 repaired and disclosed) and the filmed run `report.live-model-v3.md`
+(model recorded 1/10 before stopping; 9 repaired and disclosed). The
+gap between the two runs is Finding 3 in action — and exactly why the
+validation/repair layer exists.
 
 ## Still to test
 
-- **Live model run of the redesigned (model-led) flow** — needs a
-  provider key; the key-dependent step still outstanding.
-- **Live `--apply` run of `github_actions.py`** on our own repo —
-  needs the owner's GitHub token; only the dry-run is verified.
-- The demo recording (screen capture of the verified run + voiceover).
 - Behaviour on a large issue list (100+ issues): turn timeouts, context
   limits, and whether chunking per session is needed.
 - Approval flow for a "dangerous" tool variant of `save_report`.
 
-## What we learned (draft)
+## What we learned
 
 1. Pinning `openminion==0.1.20` in `requirements.txt` matters — the public
    API surface is version-specific and the quickstart is written against it.

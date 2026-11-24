@@ -1,112 +1,80 @@
 # TriageMinion
 
-**Tagline:** An OpenMinion agent that triages GitHub issues in seconds —
-category, priority, and what's missing — so maintainers can act, not read.
-
-**Status (honest):** The original design was verified end to end in a
-**real model-backed run via OpenRouter** (`report.real-model.md`, 10
-real issues). After a code review, the project was redesigned
-(2026-11-21): the model now classifies the issues itself and records
-structured decisions, issues can be fetched live from GitHub, and an
-actions module can label/comment on the owner's own repo. The redesign
-is verified offline (35 tests), via a live GitHub fetch, and by
-dry-run; **its live model run and the label/comment demo still need
-the owner's keys and have not been run yet.**
-
-## The problem
-
-Busy open-source projects receive more issues than maintainers can read.
-New issues arrive unlabelled, with mixed quality: some are critical
-security reports, some are feature ideas, some are missing the version or
-the steps to reproduce. The first pass — reading, sorting, asking for
-missing information — is repetitive, slow, and easy to get wrong at 2 a.m.
-
-## The solution
-
-TriageMinion does that first pass as one small, repeatable workflow:
-
-1. It loads a list of GitHub issues — or fetches them **live from
-   GitHub** with `--github owner/repo`.
-2. An OpenMinion agent reads each issue's title and body through a
-   paged tool and **classifies it itself**: category (bug / feature /
-   docs / security / question), priority (P0–P3), suggested labels,
-   what information is missing, and a one-line reason — recording
-   every decision through a structured `record_triage` tool.
-3. The report is rendered from those recorded decisions (full titles,
-   clickable links, top priorities first). If a run ends incomplete,
-   the gaps are filled by fallback keyword rules and disclosed —
-   never silently shipped as a partial report.
-4. A maintainer reviews the draft. Applying labels/comments to a real
-   repository is a separate, explicit step (`github_actions.py`,
-   dry-run by default, owner's own repos only).
-
-The output is a report like `report.example.md` (6 sample issues) and
-`report.real-issues.md` (10 real open issues from the OpenMinion
-repository itself: 8 bug, 2 feature).
+**An OpenMinion agent that triages GitHub issues in seconds — the model
+itself assigns each issue a category, a priority, and a note of what's
+missing, and renders a draft report a maintainer can act on.**
 
 ## How it works
 
-- `app.py` — CLI and the agent run: three `@tool` functions
-  (`get_issue_page`, `record_triage`, `save_report`).
-- `triage.py` — the keyword classifier, now an explicitly labelled
-  **fallback** (offline mode + repair filler), hardened against the
-  classic keyword traps (a bare "add"/"?"/"500" no longer decides
-  anything; "security" needs strong evidence).
-- `report.py` — the single renderer + validation/repair used by every
-  mode, so the report format never changes.
-- `github_client.py` / `github_actions.py` — live issue fetching and
-  the own-repo label/comment actions.
-- The agent is constructed with an explicit `session_id`, the
-  issue-page tool is forced for the demo run
-  (`forced_tools=["get_issue_page"]`), and the runtime is managed with
-  a context manager. Provider and timeout failures surface as typed
-  errors (`ProviderError`, `TurnTimeoutError`), deadline 300 s.
-- `--offline` mode runs the same workflow with fallback decisions, so
-  anyone can reproduce the report shape with no key and no network.
-- 35 offline pytest tests pin the behaviour (see README).
+1. Issues are loaded from a JSON file or fetched **live from GitHub**
+   (`--github owner/repo`, public REST API).
+2. An OpenMinion `Agent` (explicit `session_id`, context-manager
+   lifecycle) reads the raw issues through the paged `get_issue_page`
+   tool — 4 issues per call.
+3. The model classifies each issue **itself** and records every
+   decision through the structured `record_triage` tool: category
+   (bug / feature / docs / security / question), priority (P0–P3),
+   suggested labels, missing information, one-line reason.
+4. `save_report` renders the report from the recorded decisions (full
+   titles, clickable links) — and refuses to save while any decision
+   is missing. Gaps a model run leaves are filled by deterministic
+   fallback rules and **disclosed** in a "Repaired entries" section.
+5. A maintainer reviews the draft. Applying the suggested labels and a
+   triage comment to a real repository is a separate step
+   (`github_actions.py`): dry-run by default, owner's own repos only,
+   explicit `--apply`.
 
-Design choice worth noting: the model **is** trusted to classify —
-that is the agent's job — but it must record each decision as
-structured tool output. That makes a model run auditable: every entry
-in the report traces back to a recorded decision with a reason, and
-an incomplete run can be detected and repaired mechanically.
+## Features
 
-## OpenMinion building blocks used
+- **Model-led classification via a structured decision tool** —
+  `record_triage` records are enum-validated, so every report entry
+  traces back to a decision with a reason (OpenMinion `@tool` +
+  structured tool output).
+- **Paged tool reads** — `get_issue_page` exists because a single
+  10-issue tool result arrived truncated at the model; paging fixed it
+  (OpenMinion tool-result handling, worked around in our tool design).
+- **Headless-safe runs** — per-tool action-policy rules
+  (`mode: "auto"` in `.openminion/agents.json`) so the agent runs
+  unattended without interactive policy confirmations (OpenMinion
+  permissions).
+- **Validation + disclosed repair** — coverage is checked after every
+  run; a partial model run is completed by labelled fallback decisions,
+  never silently shipped (agent loop + our validation layer).
+- **Live GitHub fetch and own-repo actions** — real issues in, real
+  labels/comments out, with an ownership check before any write.
+- **Provider-swappable** — verified on OpenRouter free models via the
+  OpenMinion `openrouter` preset; typed errors (`ProviderError`,
+  `TurnTimeoutError`) and a 300 s per-run deadline keep flaky free
+  endpoints from crashing the workflow (OpenMinion providers).
+- **Offline fallback + 35 tests** — `--offline` reproduces the report
+  shape with no key and no network; the pytest suite pins the
+  classifier, renderer, repair, and fetch parsing.
 
-- Python SDK **0.1.20** (pinned in `requirements.txt`), `Agent` facade
-- Decorated callable tools (`@tool`), exposed only for the run
-- `forced_tools` for a guaranteed tool call in the demo
-- Explicit sessions (`session_id="triage-minion-demo"`)
-- Context-manager runtime lifecycle
-- Typed failure handling: `ProviderError`, `TurnTimeoutError`
-- Per-run deadline (`timeout_seconds=300`)
-- Echo provider for a credential-free wiring check
-- Action-policy rules (`mode: "auto"` per tool) so headless runs are not
-  blocked by interactive confirmations
+## Why it matters
 
-Full findings, including what did not work: [BUILDING_BLOCKS.md](BUILDING_BLOCKS.md).
+The first pass over new issues — reading, sorting, asking for missing
+information — is repetitive work maintainers do at 2 a.m. TriageMinion
+shows a small OpenMinion agent doing that pass end to end on real
+issues, with an auditable trail: a judge can open the saved report and
+check every verdict against the issue it came from. It is deliberately
+small and reliable rather than ambitious and partial — and honest about
+its limits: free models sometimes stop early, so the repair path is
+part of the product, not an embarrassment hidden from the report.
 
-## What we learned
+## Evidence
 
-1. **The echo provider is a misleading demo.** A run "completes" while no
-   tool is ever called. Our app labels its fallback output instead of
-   pretending the model produced it — and the real demo must use a
-   tool-capable provider.
-2. **Naive keyword classification fails on real issues.** Tested against
-   10 real OpenMinion issues, v1 called a feature proposal a security
-   incident (its body mentioned "credentials leak") and missed several
-   real bug reports. Title-weighted scoring, a strong-evidence security
-   override, and a "steps to reproduce" bonus fixed all 10 — one more
-   reason the keyword rules are now only a fallback behind the model,
-   with their remaining traps pinned by regression tests.
-3. **Pinning the SDK version matters.** The public API surface is
-   version-specific; `openminion==0.1.20` in `requirements.txt` is what
-   the code and docs are verified against.
-
-## Demo
-
-A ~3-minute demo outline (live run, report walkthrough, one honest
-finding) is in [SUBMISSION.md](SUBMISSION.md#demo-outline-target-3-minutes).
-The video will show a real model-backed run of the current model-led
-design; that run is still to be recorded once a provider key is
-available (the previous design's verified run is `report.real-model.md`).
+- Repo: https://github.com/Bidan11/triage-minion
+- Live model run of the current design (model recorded 7/10 decisions
+  itself; 3 repaired, disclosed): `report.live-model.md`
+- The filmed demo run (model 1/10 before stopping; repair disclosed):
+  `report.live-model-v3.md` — the contrast between the two reports is
+  the free-model reliability finding, kept on purpose
+- Offline baselines: `report.real-issues.md` (10 real OpenMinion
+  issues), `report.example.md` (6 samples)
+- Label/comment demo applied live on our own repo (2026-11-23):
+  [issue #1](https://github.com/Bidan11/triage-minion/issues/1) and
+  [issue #2](https://github.com/Bidan11/triage-minion/issues/2) carry
+  real TriageMinion labels and triage-summary comments
+- Tests: `python -m pytest -q` — 35 passing, fully offline
+- Findings, written as reproducible mini bug reports:
+  [BUILDING_BLOCKS.md](BUILDING_BLOCKS.md)
