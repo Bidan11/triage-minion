@@ -117,18 +117,24 @@ python app.py --offline --input sample_issues.json --output report.md
 Saved artifacts from real runs of the current design — open them and
 check the agent's verdicts against the issues themselves:
 
-- `report.live-model.md` — **live model run of the current model-led
-  design** (2026-11-23) on the 10 newest OpenMinion issues
-  (`real_issues_live.json`, #821–#803, fetched via the GitHub API).
-  The model recorded **7 of 10 decisions itself**; the 3 it missed
-  (#811, #805, #803) were repaired by the fallback rules and are
-  disclosed in the report's "Repaired entries" section.
-- `report.live-model-v3.md` — the run filmed for the demo video
-  (2026-11-23). Free models are inconsistent: in this take the model
-  recorded only 1 of 10 decisions before stopping, and the repair path
-  filled the rest, again disclosed. Both reports are kept on purpose —
-  the difference between them *is* the finding about free-model
-  reliability.
+- `report.live-model-v4.md` — **the run filmed for the current demo
+  video** (recorded 2026-11-24) on the fetched issue set
+  (`real_issues_live.json`, #821–#803, fetched via the GitHub API on
+  2026-11-20, when they were the newest OpenMinion issues). The model
+  recorded **10 of 10 decisions itself** via `record_triage` — no
+  repairs, no fallback decisions. Snapshot: 7 bug, 2 feature,
+  1 security.
+- `report.live-model.md` — live model run of the current model-led
+  design (2026-11-23) on the same issue set. The model recorded
+  **7 of 10 decisions itself**; the 3 it missed (#811, #805, #803)
+  were repaired by the fallback rules and are disclosed in the
+  report's "Repaired entries" section.
+- `report.live-model-v3.md` — an earlier filmed take (2026-11-23),
+  superseded by the v4 run above. Free models are inconsistent: in
+  this take the model recorded only 1 of 10 decisions before
+  stopping, and the repair path filled the rest, again disclosed.
+  All three reports are kept on purpose — the difference between
+  them *is* the finding about free-model reliability.
 - `report.real-issues.md` / `report.example.md` — offline fallback runs
   on the 10 real issues and the 6 samples (deterministic; the baseline
   the tests pin).
@@ -191,10 +197,12 @@ materials are in [SUBMISSION.md](SUBMISSION.md).
 - [x] Live model run of the NEW model-led design (2026-11-23) —
       `report.live-model.md`: model recorded 7/10 decisions itself,
       3 repaired and disclosed
+- [x] Final live model run (2026-11-24) — `report.live-model-v4.md`:
+      model recorded 10/10 decisions itself, 0 repaired
 - [x] Label/comment demo applied live on our own repo via
       `github_actions.py --apply` (2026-11-23) — issues #1 and #2
 - [x] Demo video recorded from a real model-backed run of the new
-      design (2026-11-23)
+      design — final take recorded 2026-11-24 (the v4 run above)
 - [ ] Submission PR to the organisers' Hackathon #5 repository
       (repository URL not yet announced by the organisers)
 

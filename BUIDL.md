@@ -64,11 +64,15 @@ part of the product, not an embarrassment hidden from the report.
 ## Evidence
 
 - Repo: https://github.com/Bidan11/triage-minion
-- Live model run of the current design (model recorded 7/10 decisions
-  itself; 3 repaired, disclosed): `report.live-model.md`
-- The filmed demo run (model 1/10 before stopping; repair disclosed):
-  `report.live-model-v3.md` — the contrast between the two reports is
-  the free-model reliability finding, kept on purpose
+- The run filmed for the current demo video (recorded 2026-11-24;
+  model recorded 10/10 decisions itself, no repairs):
+  `report.live-model-v4.md`
+- Earlier live model runs of the current design:
+  `report.live-model.md` (2026-11-23; model 7/10, 3 repaired,
+  disclosed) and `report.live-model-v3.md` (2026-11-23, an earlier
+  filmed take; model 1/10 before stopping, repair disclosed) — the
+  contrast between the reports is the free-model reliability
+  finding, kept on purpose
 - Offline baselines: `report.real-issues.md` (10 real OpenMinion
   issues), `report.example.md` (6 samples)
 - Label/comment demo applied live on our own repo (2026-11-23):

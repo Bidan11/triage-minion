@@ -80,8 +80,8 @@ workaround we shipped).
   immediately; Cohere completed the full workflow in ~45 s but also
   returned `EMPTY_PROVIDER_RESPONSE` twice in a row in a later session;
   on 2026-11-23 the same workflow produced one run where the model
-  recorded 7/10 decisions (`report.live-model.md`) and a later filmed
-  run where it recorded only 1/10 before stopping
+  recorded 7/10 decisions (`report.live-model.md`) and a later run
+  where it recorded only 1/10 before stopping
   (`report.live-model-v3.md`). OpenRouter's free tier allows 50 model
   requests/day per account, which also caps retakes.
 - **Workaround we shipped:** Design for unreliable models instead of
@@ -232,10 +232,13 @@ landed the same night. What changed, and what we learned doing it:
 **Live verification of the redesign (2026-11-23).** The model-led flow
 has now had real model runs via OpenRouter: `report.live-model.md`
 (model recorded 7/10 decisions itself on the live-fetched issues;
-3 repaired and disclosed) and the filmed run `report.live-model-v3.md`
-(model recorded 1/10 before stopping; 9 repaired and disclosed). The
-gap between the two runs is Finding 3 in action — and exactly why the
-validation/repair layer exists.
+3 repaired and disclosed) and a second run the same day,
+`report.live-model-v3.md` (model recorded 1/10 before stopping;
+9 repaired and disclosed). The gap between the two runs is Finding 3
+in action — and exactly why the validation/repair layer exists. A
+final run on 2026-11-24 (`report.live-model-v4.md`) recorded 10/10
+decisions itself with no repairs; that is the run filmed for the
+current demo video.
 
 ## Still to test
 
